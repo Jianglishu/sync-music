@@ -144,6 +144,7 @@ class HostServer {
         'Content-Length': chunkSize,
         'Content-Type': file.mime,
         'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*',
       });
 
       const stream = fs.createReadStream(file.path, { start, end });
@@ -157,6 +158,7 @@ class HostServer {
         'Content-Length': fileSize,
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*',
       });
 
       const stream = fs.createReadStream(file.path);

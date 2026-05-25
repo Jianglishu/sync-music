@@ -25,12 +25,17 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
   // ======== Local File Handler ========
   const handleAddLocalFile = useCallback(async () => {
     if (!window.electronAPI) return;
-    const result = await window.electronAPI.selectLocalFiles();
-    if (result.success && result.songs.length > 0) {
-      // Add to local state
-      setPlaylist((prev) => [...prev, ...result.songs.map(s => ({ ...s, audioUrl: s.audioUrl }))]);
-      // Batch add to server
-      await window.electronAPI.addSongs(result.songs);
+    try {
+      const result = await window.electronAPI.selectLocalFiles();
+      if (result.success && result.songs.length > 0) {
+        setPlaylist((prev) => [...prev, ...result.songs]);
+        await window.electronAPI.addSongs(result.songs);
+      } else if (result.error) {
+        console.error('selectLocalFiles error:', result.error);
+      }
+    } catch (err) {
+      console.error('Failed to add local file:', err);
+      alert('添加本地文件失败: ' + (err.message || '未知错误'));
     }
   }, []);
 
@@ -162,9 +167,13 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
 
     const player = audioPlayerRef.current;
     if (player) {
-      await player.loadAudio(url);
-      player.play(0);
-      setIsPlaying(true);
+      try {
+        await player.loadAudio(url);
+        player.play(0);
+        setIsPlaying(true);
+      } catch (err) {
+        alert('播放失败: ' + (err.message || '未知错误'));
+      }
     }
   }, [playlist]);
 
