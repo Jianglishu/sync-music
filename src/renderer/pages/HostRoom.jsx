@@ -22,6 +22,18 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
 
   const roomCode = roomInfo?.roomCode || `${roomInfo?.publicIp || '127.0.0.1'}:${roomInfo?.port}`;
 
+  // ======== Local File Handler ========
+  const handleAddLocalFile = useCallback(async () => {
+    if (!window.electronAPI) return;
+    const result = await window.electronAPI.selectLocalFiles();
+    if (result.success && result.songs.length > 0) {
+      // Add to local state
+      setPlaylist((prev) => [...prev, ...result.songs.map(s => ({ ...s, audioUrl: s.audioUrl }))]);
+      // Batch add to server
+      await window.electronAPI.addSongs(result.songs);
+    }
+  }, []);
+
   // Initialize audio player & sync engine
   useEffect(() => {
     const initAudio = async () => {
@@ -127,7 +139,8 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
     if (!song) return;
 
     let url = song.audioUrl;
-    if (!url && window.electronAPI) {
+    // For netease songs, fetch the audio URL dynamically
+    if (!url && song.source !== 'local' && window.electronAPI) {
       const result = await window.electronAPI.getSongUrl(song.id);
       if (result.success) {
         url = result.url;
@@ -262,6 +275,9 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
       <div className="search-section">
         <button className="btn btn-primary" style={{ padding: '8px 14px', fontSize: 13, flexShrink: 0 }} onClick={() => setShowSearch(true)}>
           🔍 搜索
+        </button>
+        <button className="btn btn-secondary" style={{ padding: '8px 14px', fontSize: 13, flexShrink: 0, background: '#1e3a1e' }} onClick={handleAddLocalFile}>
+          📁 本地文件
         </button>
         <input
           className="input"

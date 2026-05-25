@@ -1,22 +1,37 @@
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.aac', '.ogg', '.m4a', '.wma']);
+const MIME_MAP = {
+  '.mp3': 'audio/mpeg',
+  '.flac': 'audio/flac',
+  '.wav': 'audio/wav',
+  '.aac': 'audio/aac',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.wma': 'audio/x-ms-wma',
+};
 
 class HostServer {
   constructor(port = 0) {
     this.port = port;
     this.wss = null;
-    this.clients = new Map(); // ws -> { id, role, joinedAt }
+    this.server = null;
+    this.clients = new Map();
     this.nextClientId = 1;
-    this.onEvent = null; // callback(event, data)
+    this.onEvent = null;
+    this.localFiles = new Map(); // fileId → { path, name, size, mime, duration }
 
-    // Room state
     this.roomState = {
       playlist: [],
       currentIndex: -1,
       isPlaying: false,
-      position: 0,     // current position in seconds (for seek)
-      startTime: 0,    // server timestamp when playback started
-      startPosition: 0,// position in song when playback started
+      position: 0,
+      startTime: 0,
+      startPosition: 0,
       currentSong: null,
     };
   }
@@ -24,6 +39,14 @@ class HostServer {
   async start() {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
+        const url = req.url || '/';
+
+        // Route: Serve local audio files
+        if (url.startsWith('/files/')) {
+          return this._serveFile(req, res, url);
+        }
+
+        // Default: health check
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('SyncMusic Server');
       });
@@ -51,6 +74,108 @@ class HostServer {
     });
   }
 
+  // ====== File Serving ======
+
+  /**
+   * Serve a local audio file via HTTP.
+   * @param {string} filePath - Absolute path to the audio file
+   * @returns {object} songInfo - { id, name, audioUrl, duration, source, artists, filePath }
+   */
+  serveLocalFile(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (!AUDIO_EXTENSIONS.has(ext)) {
+      throw new Error(`Unsupported audio format: ${ext}`);
+    }
+
+    const stat = fs.statSync(filePath);
+    const fileHash = crypto.createHash('md5').update(filePath).digest('hex').slice(0, 8);
+    const fileName = path.basename(filePath);
+    const fileId = `${fileHash}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+    this.localFiles.set(fileId, {
+      path: filePath,
+      name: fileName,
+      size: stat.size,
+      mime: MIME_MAP[ext] || 'application/octet-stream',
+      duration: 0, // will be estimated from file size if ffprobe not available
+    });
+
+    // Estimate duration: assume ~1MB/min for MP3 128kbps
+    const estimatedDuration = Math.round(stat.size / (128 * 1000 / 8) / 60);
+
+    return {
+      id: `local-${fileId}`,
+      name: fileName.replace(/\.[^/.]+$/, ''),
+      artists: '本地音乐',
+      album: '',
+      albumPic: '',
+      duration: estimatedDuration,
+      source: 'local',
+      audioUrl: `http://127.0.0.1:${this.port}/files/${encodeURIComponent(fileId)}`,
+      filePath: filePath,
+    };
+  }
+
+  _serveFile(req, res, url) {
+    const fileId = decodeURIComponent(url.split('/files/')[1] || '');
+
+    if (!fileId || !this.localFiles.has(fileId)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('File not found');
+      return;
+    }
+
+    const file = this.localFiles.get(fileId);
+
+    // Support range requests (for seeking in audio)
+    const stat = fs.statSync(file.path);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': file.mime,
+        'Cache-Control': 'no-cache',
+      });
+
+      const stream = fs.createReadStream(file.path, { start, end });
+      stream.pipe(res);
+      stream.on('error', () => {
+        res.end();
+      });
+    } else {
+      res.writeHead(200, {
+        'Content-Type': file.mime,
+        'Content-Length': fileSize,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+      });
+
+      const stream = fs.createReadStream(file.path);
+      stream.pipe(res);
+      stream.on('error', () => {
+        res.end();
+      });
+    }
+  }
+
+  /**
+   * Get the HTTP URL for a local file.
+   */
+  getFileUrl(fileId) {
+    return `http://127.0.0.1:${this.port}/files/${encodeURIComponent(fileId)}`;
+  }
+
+  // ====== WebSocket Message Handling ======
+
   _handleMessage(ws, clientInfo, data) {
     try {
       const msg = JSON.parse(data.toString());
@@ -62,7 +187,6 @@ class HostServer {
           this._send(ws, { type: 'sync-response', serverTime: Date.now() });
           break;
         default:
-          // Forward to host (the server itself is the host)
           this._emit('client-message', { clientId: clientInfo.id, message: msg });
           break;
       }
@@ -72,7 +196,6 @@ class HostServer {
   }
 
   _handleSync(ws, msg) {
-    // NTP-style sync: return the received clientTime along with serverTime
     this._send(ws, {
       type: 'sync',
       clientTime: msg.clientTime,

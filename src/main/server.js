@@ -1,4 +1,4 @@
-const { ipcMain, BrowserWindow } = require('electron');
+const { ipcMain, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
 const HostServer = require('../network/HostServer');
@@ -261,10 +261,48 @@ function registerHandlers(window) {
     return { success: true };
   });
 
+  // ======== Local File Selection ========
+  ipcMain.handle('file:select', async () => {
+    if (!currentServer) return { error: 'Not hosting' };
+
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择本地音频文件',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '音频文件', extensions: ['mp3', 'flac', 'wav', 'aac', 'ogg', 'm4a', 'wma'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: true, songs: [] };
+    }
+
+    const songs = [];
+    for (const filePath of result.filePaths) {
+      try {
+        const song = currentServer.serveLocalFile(filePath);
+        songs.push(song);
+      } catch (err) {
+        console.error('Failed to serve file:', filePath, err.message);
+      }
+    }
+
+    return { success: true, songs };
+  });
+
   // ======== Playlist Management ========
   ipcMain.handle('playlist:add', async (_, song) => {
     if (!currentServer) return { error: 'Not hosting' };
     currentServer.addToPlaylist(song);
+    return { success: true, playlist: currentServer.roomState.playlist };
+  });
+
+  ipcMain.handle('playlist:addBatch', async (_, songs) => {
+    if (!currentServer) return { error: 'Not hosting' };
+    for (const song of songs) {
+      currentServer.addToPlaylist(song);
+    }
     return { success: true, playlist: currentServer.roomState.playlist };
   });
 

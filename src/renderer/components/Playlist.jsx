@@ -36,6 +36,9 @@ export default function Playlist({ items, currentIndex, onSelect, onRemove }) {
             <div className="name">{song.name || '未知歌曲'}</div>
             <div className="artist">{song.artists || '未知艺术家'}</div>
           </div>
+          <span className={`source-badge ${song.source === 'local' ? 'local' : 'netease'}`}>
+            {song.source === 'local' ? '本地' : '云'}
+          </span>
           <div className="duration">{formatTime(song.duration)}</div>
           {onRemove && (
             <button

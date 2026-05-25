@@ -17,8 +17,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSongUrl: (songId) => ipcRenderer.invoke('music:getUrl', songId),
   resolveSongLink: (link) => ipcRenderer.invoke('music:resolveLink', link),
 
+  // Local file selection (Host only)
+  selectLocalFiles: () => ipcRenderer.invoke('file:select'),
+
   // Playlist management (Host only)
   addSong: (song) => ipcRenderer.invoke('playlist:add', song),
+  addSongs: (songs) => ipcRenderer.invoke('playlist:addBatch', songs),
   removeSong: (index) => ipcRenderer.invoke('playlist:remove', index),
   reorderPlaylist: (fromIndex, toIndex) => ipcRenderer.invoke('playlist:reorder', fromIndex, toIndex),
 
