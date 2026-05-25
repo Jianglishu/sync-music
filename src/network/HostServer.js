@@ -84,10 +84,18 @@ class HostServer {
   serveLocalFile(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     if (!AUDIO_EXTENSIONS.has(ext)) {
-      throw new Error(`Unsupported audio format: ${ext}`);
+      throw new Error(`不支持的文件格式: ${ext}`);
     }
 
-    const stat = fs.statSync(filePath);
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+    } catch (e) {
+      throw new Error(`无法读取文件: ${filePath}`);
+    }
+    if (!stat.isFile()) {
+      throw new Error(`不是有效的文件: ${filePath}`);
+    }
     const fileHash = crypto.createHash('md5').update(filePath).digest('hex').slice(0, 8);
     const fileName = path.basename(filePath);
     const fileId = `${fileHash}-${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
@@ -100,8 +108,8 @@ class HostServer {
       duration: 0, // will be estimated from file size if ffprobe not available
     });
 
-    // Estimate duration: assume ~1MB/min for MP3 128kbps
-    const estimatedDuration = Math.round(stat.size / (128 * 1000 / 8) / 60);
+    // Estimate duration (seconds): assume 128kbps (~16KB/s)
+    const estimatedDuration = Math.max(1, Math.round(stat.size / 16000));
 
     return {
       id: `local-${fileId}`,

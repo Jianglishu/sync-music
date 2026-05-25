@@ -34,6 +34,9 @@ class AudioPlayer {
     }
 
     const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`无法加载音频 (HTTP ${response.status})`);
+    }
     const arrayBuffer = await response.arrayBuffer();
     this.audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
     return this.audioBuffer;

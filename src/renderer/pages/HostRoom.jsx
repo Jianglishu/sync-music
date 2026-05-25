@@ -132,20 +132,13 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
     // Process incoming messages if needed
   }, [wsMessages]);
 
-  // Monitor yt-dlp installation status
+  // Listen for yt-dlp install progress events (triggered by search/link action)
   useEffect(() => {
     if (!window.electronAPI) return;
-    setYtDlpStatus('checking');
-    setYtDlpMessage('检查 yt-dlp...');
-
     const cleanup = window.electronAPI.onYtDlpStatus(({ status, message }) => {
       setYtDlpStatus(status);
       setYtDlpMessage(message || '');
     });
-
-    // Also manually trigger check
-    window.electronAPI.ensureYtDlp().catch(() => {});
-
     return cleanup;
   }, []);
 
@@ -289,16 +282,13 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
         </div>
       </div>
 
-      {/* Device count */}
+      {/* Device count & yt-dlp status */}
       <div style={{ display: 'flex', gap: 12, padding: '0 16px 8px', fontSize: 12, color: '#888', flexWrap: 'wrap' }}>
         <span>🖥️ 已连接: {deviceCount || 0} 台设备</span>
-        {ytDlpStatus && ytDlpStatus !== 'done' && (
-          <span style={{
-            color: ytDlpStatus === 'error' ? '#e74c3c' : ytDlpStatus === 'installing' || ytDlpStatus === 'checking' ? '#f0ad4e' : '#888'
-          }}>
-            {ytDlpStatus === 'checking' && '🔍 检查 yt-dlp...'}
-            {ytDlpStatus === 'installing' && '⬇️ 安装 yt-dlp...'}
-            {ytDlpStatus === 'error' && '⚠️ ' + (ytDlpMessage || 'yt-dlp 未安装')}
+        {ytDlpStatus === 'installing' && <span style={{ color: '#f0ad4e' }}>⬇️ 安装 yt-dlp...</span>}
+        {ytDlpStatus === 'error' && (
+          <span title={ytDlpMessage} style={{ color: '#e74c3c', cursor: 'help' }}>
+            ⚠️ yt-dlp 未安装（搜索/链接解析可能失败）
           </span>
         )}
         {syncInfo && (
