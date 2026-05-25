@@ -3,7 +3,7 @@
  * Extracts direct audio URLs from streaming service links.
  */
 
-const { execFile } = require('child_process');
+const { execFile, execSync } = require('child_process');
 const path = require('path');
 
 class AudioExtractor {
@@ -20,6 +20,39 @@ class AudioExtractor {
         resolve(!err && stdout.trim().length > 0);
       });
     });
+  }
+
+  /**
+   * Install yt-dlp via Homebrew. macOS only.
+   */
+  async ensureInstalled(onProgress) {
+    const available = await this.checkAvailable();
+    if (available) {
+      if (onProgress) onProgress('done', 'yt-dlp 已就绪');
+      return true;
+    }
+
+    if (onProgress) onProgress('installing', '正在检查 Homebrew...');
+
+    // Check brew availability
+    try {
+      execSync('brew --version', { stdio: 'pipe' });
+    } catch {
+      if (onProgress) onProgress('error', 'Homebrew 未安装，请先安装: https://brew.sh');
+      return false;
+    }
+
+    if (onProgress) onProgress('installing', '正在安装 yt-dlp (brew install yt-dlp)...');
+
+    try {
+      execSync('brew install yt-dlp', { stdio: 'pipe', timeout: 180000 });
+      if (onProgress) onProgress('done', 'yt-dlp 安装完成');
+      return true;
+    } catch (e) {
+      const msg = (e.stderr || e.message || '').toString().trim();
+      if (onProgress) onProgress('error', 'yt-dlp 安装失败: ' + msg);
+      return false;
+    }
   }
 
   /**

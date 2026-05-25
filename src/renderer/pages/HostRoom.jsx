@@ -14,6 +14,8 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
   const [currentPosition, setCurrentPosition] = useState(0);
   const [syncInfo, setSyncInfo] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
+  const [ytDlpStatus, setYtDlpStatus] = useState(null); // null | 'checking' | 'installing' | 'done' | 'error'
+  const [ytDlpMessage, setYtDlpMessage] = useState('');
 
   const audioPlayerRef = useRef(null);
   const syncEngineRef = useRef(null);
@@ -129,6 +131,23 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
   useEffect(() => {
     // Process incoming messages if needed
   }, [wsMessages]);
+
+  // Monitor yt-dlp installation status
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    setYtDlpStatus('checking');
+    setYtDlpMessage('检查 yt-dlp...');
+
+    const cleanup = window.electronAPI.onYtDlpStatus(({ status, message }) => {
+      setYtDlpStatus(status);
+      setYtDlpMessage(message || '');
+    });
+
+    // Also manually trigger check
+    window.electronAPI.ensureYtDlp().catch(() => {});
+
+    return cleanup;
+  }, []);
 
   // ======== Playback Handlers ========
   // Use refs to avoid stale closures in effects
@@ -271,8 +290,17 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
       </div>
 
       {/* Device count */}
-      <div style={{ display: 'flex', gap: 12, padding: '0 16px 8px', fontSize: 12, color: '#888' }}>
+      <div style={{ display: 'flex', gap: 12, padding: '0 16px 8px', fontSize: 12, color: '#888', flexWrap: 'wrap' }}>
         <span>🖥️ 已连接: {deviceCount || 0} 台设备</span>
+        {ytDlpStatus && ytDlpStatus !== 'done' && (
+          <span style={{
+            color: ytDlpStatus === 'error' ? '#e74c3c' : ytDlpStatus === 'installing' || ytDlpStatus === 'checking' ? '#f0ad4e' : '#888'
+          }}>
+            {ytDlpStatus === 'checking' && '🔍 检查 yt-dlp...'}
+            {ytDlpStatus === 'installing' && '⬇️ 安装 yt-dlp...'}
+            {ytDlpStatus === 'error' && '⚠️ ' + (ytDlpMessage || 'yt-dlp 未安装')}
+          </span>
+        )}
         {syncInfo && (
           <span className={syncInfo.rtt < 100 ? 'good' : syncInfo.rtt < 300 ? 'fair' : 'poor'}>
             延迟: ~{syncInfo.rtt}ms

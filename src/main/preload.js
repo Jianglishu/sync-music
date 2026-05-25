@@ -58,6 +58,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('app:error', handler);
   },
 
+  // yt-dlp 状态
+  onYtDlpStatus: (callback) => {
+    const handler = (_, data) => callback(data);
+    ipcRenderer.on('tools:ytdlp-status', handler);
+    return () => ipcRenderer.removeListener('tools:ytdlp-status', handler);
+  },
+  ensureYtDlp: () => ipcRenderer.invoke('tools:ensureYtDlp'),
+
   // Send WebSocket message (Client only)
   sendWsMessage: (msg) => ipcRenderer.invoke('ws:send', msg),
 

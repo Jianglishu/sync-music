@@ -22,6 +22,32 @@ function sendToRenderer(channel, data) {
 function registerHandlers(window) {
   mainWindow = window;
 
+  // ======== yt-dlp 自动安装 ========
+  ensureYtDlp();
+
+  // 后台安装 yt-dlp（如未安装）
+  async function ensureYtDlp() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // 延迟几秒等 UI 就绪后再安装，避免阻塞启动
+    await new Promise(r => setTimeout(r, 3000));
+    await extractor.ensureInstalled((status, msg) => {
+      sendToRenderer('tools:ytdlp-status', { status, message: msg });
+    });
+  }
+
+  ipcMain.handle('tools:ensureYtDlp', async () => {
+    return new Promise((resolve) => {
+      extractor.ensureInstalled((status, msg) => {
+        sendToRenderer('tools:ytdlp-status', { status, message: msg });
+        if (status === 'done' || status === 'error') {
+          resolve({ status, message: msg });
+        }
+      }).then((result) => {
+        resolve({ status: result ? 'done' : 'error', message: result ? 'yt-dlp 已就绪' : '安装失败' });
+      });
+    });
+  });
+
   // ======== Room Management ========
   ipcMain.handle('room:create', async () => {
     if (activeRole) return { error: 'Already in a room' };
