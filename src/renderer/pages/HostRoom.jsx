@@ -151,6 +151,10 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
     handlePlayPause: async () => {},
   });
 
+  const currentSong = currentIndex >= 0 && currentIndex < playlist.length
+    ? playlist[currentIndex]
+    : null;
+
   const playSong = useCallback(async (index) => {
     const song = playlist[index];
     if (!song) return;
@@ -173,14 +177,23 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
     setAudioUrl(url);
     setCurrentIndex(index);
 
-    if (window.electronAPI) {
-      await window.electronAPI.hostPlay(index, url);
-    }
-
     const player = audioPlayerRef.current;
     if (player) {
       try {
         await player.loadAudio(url);
+        let songToPlay = song;
+        const actualDuration = player.getDuration();
+        if (actualDuration > 0 && Math.abs(actualDuration - (song.duration || 0)) > 1) {
+          const updatedSong = { ...song, duration: actualDuration };
+          songToPlay = updatedSong;
+          setPlaylist((prev) => prev.map((item, i) => i === index ? updatedSong : item));
+          if (window.electronAPI) {
+            await window.electronAPI.updateSong(index, updatedSong);
+          }
+        }
+        if (window.electronAPI) {
+          await window.electronAPI.hostPlay(index, songToPlay.audioUrl || url);
+        }
         player.play(0);
         setIsPlaying(true);
       } catch (err) {
@@ -188,6 +201,21 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
       }
     }
   }, [playlist]);
+
+  const handleSeek = useCallback(async (event) => {
+    const player = audioPlayerRef.current;
+    if (!player || !currentSong?.duration) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const seconds = ratio * currentSong.duration;
+
+    player.seek(seconds);
+    setCurrentPosition(seconds);
+    if (window.electronAPI) {
+      await window.electronAPI.hostSeek(seconds);
+    }
+  }, [currentSong]);
 
   const handlePlayPause = useCallback(async () => {
     if (currentIndex < 0 && playlist.length > 0) {
@@ -262,10 +290,6 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
     const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
-
-  const currentSong = currentIndex >= 0 && currentIndex < playlist.length
-    ? playlist[currentIndex]
-    : null;
 
   return (
     <div className="room">
@@ -354,7 +378,7 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
           )}
         </div>
 
-        <div className="progress-bar">
+        <div className="progress-bar" onClick={handleSeek} title="点击调整播放进度">
           <div className="progress-fill" style={{ width: `${currentSong ? (currentPosition / (currentSong.duration || 1)) * 100 : 0}%` }} />
         </div>
 

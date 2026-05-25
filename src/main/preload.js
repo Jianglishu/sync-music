@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addSong: (song) => ipcRenderer.invoke('playlist:add', song),
   addSongs: (songs) => ipcRenderer.invoke('playlist:addBatch', songs),
   removeSong: (index) => ipcRenderer.invoke('playlist:remove', index),
+  updateSong: (index, song) => ipcRenderer.invoke('playlist:update', index, song),
   reorderPlaylist: (fromIndex, toIndex) => ipcRenderer.invoke('playlist:reorder', fromIndex, toIndex),
 
   // Events from main process

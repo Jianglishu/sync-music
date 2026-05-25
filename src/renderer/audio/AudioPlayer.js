@@ -9,6 +9,9 @@ class AudioPlayer {
     this.gainNode = null;
     this.analyser = null;
     this.audioBuffer = null;
+    this.audioElement = null;
+    this.mode = 'buffer';
+    this.scheduledTimer = null;
     this.isPlaying = false;
     this.startTime = 0;       // audioContext time when playback started
     this.startPosition = 0;   // position in seconds where playback started
@@ -28,6 +31,13 @@ class AudioPlayer {
   }
 
   async loadAudio(url) {
+    if (this._shouldUseMediaElement(url)) {
+      return this._loadMediaElement(url);
+    }
+
+    this._clearMediaElement();
+    this.mode = 'buffer';
+
     // Resume context if suspended (browser autoplay policy)
     if (this.audioContext.state === 'suspended') {
       await this.audioContext.resume();
@@ -42,6 +52,50 @@ class AudioPlayer {
     return this.audioBuffer;
   }
 
+  _shouldUseMediaElement(url) {
+    return typeof url === 'string' && /^https?:\/\/127\.0\.0\.1:/i.test(url);
+  }
+
+  _loadMediaElement(url) {
+    this.stop();
+    this.audioBuffer = null;
+    this.mode = 'element';
+
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.src = url;
+    audio.volume = this.volume;
+    audio.playbackRate = this.playbackRate;
+    audio.onended = () => {
+      this.isPlaying = false;
+      if (this.onStateChange) this.onStateChange('ended');
+    };
+    audio.onerror = () => {
+      if (this.onStateChange) this.onStateChange('error');
+    };
+    this.audioElement = audio;
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        audio.removeEventListener('canplay', onReady);
+        audio.removeEventListener('loadedmetadata', onReady);
+        audio.removeEventListener('error', onError);
+      };
+      const onReady = () => {
+        cleanup();
+        resolve(audio);
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error('无法加载本地音频'));
+      };
+      audio.addEventListener('canplay', onReady, { once: true });
+      audio.addEventListener('loadedmetadata', onReady, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      audio.load();
+    });
+  }
+
   /**
    * Schedule playback at a specific audioContext time.
    * @param {number} when - audioContext.currentTime to start playing
@@ -49,6 +103,10 @@ class AudioPlayer {
    * @param {number} rate - playback rate (1.0 = normal)
    */
   schedulePlay(when, position = 0, rate = 1.0) {
+    if (this.mode === 'element') {
+      return this._scheduleMediaElementPlay(when, position, rate);
+    }
+
     if (!this.audioBuffer) return false;
 
     // Stop previous source
@@ -77,6 +135,35 @@ class AudioPlayer {
     return true;
   }
 
+  _scheduleMediaElementPlay(when, position = 0, rate = 1.0) {
+    if (!this.audioElement) return false;
+
+    this.stop();
+    this.mode = 'element';
+    this.audioElement.currentTime = Math.max(0, position);
+    this.audioElement.playbackRate = rate;
+
+    const delayMs = Math.max(0, (when - this.audioContext.currentTime) * 1000);
+    this.scheduledTimer = setTimeout(async () => {
+      try {
+        await this.audioElement.play();
+        this.isPlaying = true;
+        this.startTime = this.audioContext.currentTime;
+        this.startPosition = position;
+        this.playbackRate = rate;
+        if (this.onStateChange) this.onStateChange('playing');
+      } catch (err) {
+        this.isPlaying = false;
+        if (this.onStateChange) this.onStateChange('error');
+      }
+    }, delayMs);
+
+    this.startTime = when;
+    this.startPosition = position;
+    this.playbackRate = rate;
+    return true;
+  }
+
   /**
    * Immediate play (for non-sync local testing).
    */
@@ -85,6 +172,15 @@ class AudioPlayer {
   }
 
   pause() {
+    if (this.mode === 'element') {
+      if (!this.audioElement || !this.audioContext) return;
+      this.startPosition = this.getCurrentPosition();
+      this.audioElement.pause();
+      this.isPlaying = false;
+      if (this.onStateChange) this.onStateChange('paused');
+      return;
+    }
+
     if (!this.isPlaying || !this.source || !this.audioContext) return;
 
     // Get current position and stop
@@ -101,6 +197,16 @@ class AudioPlayer {
   }
 
   stop() {
+    if (this.scheduledTimer) {
+      clearTimeout(this.scheduledTimer);
+      this.scheduledTimer = null;
+    }
+    if (this.mode === 'element' && this.audioElement) {
+      this.audioElement.pause();
+      this.isPlaying = false;
+      return;
+    }
+
     if (this.source) {
       try { this.source.stop(); } catch (e) { /* already stopped */ }
       this.source.disconnect();
@@ -122,6 +228,10 @@ class AudioPlayer {
    * Get current playback position in seconds.
    */
   getCurrentPosition() {
+    if (this.mode === 'element' && this.audioElement) {
+      return this.audioElement.currentTime || this.startPosition;
+    }
+
     if (!this.isPlaying || !this.audioContext) {
       return this.startPosition;
     }
@@ -129,10 +239,23 @@ class AudioPlayer {
     return this.startPosition + elapsed * this.playbackRate;
   }
 
+  getDuration() {
+    if (this.mode === 'element' && this.audioElement && Number.isFinite(this.audioElement.duration)) {
+      return this.audioElement.duration;
+    }
+    if (this.audioBuffer) {
+      return this.audioBuffer.duration;
+    }
+    return 0;
+  }
+
   setVolume(vol) {
     this.volume = Math.max(0, Math.min(1, vol));
     if (this.gainNode) {
       this.gainNode.gain.value = this.volume;
+    }
+    if (this.audioElement) {
+      this.audioElement.volume = this.volume;
     }
   }
 
@@ -140,6 +263,9 @@ class AudioPlayer {
     this.playbackRate = rate;
     if (this.source) {
       this.source.playbackRate.value = rate;
+    }
+    if (this.audioElement) {
+      this.audioElement.playbackRate = rate;
     }
   }
 
@@ -166,9 +292,23 @@ class AudioPlayer {
 
   destroy() {
     this.stop();
+    this._clearMediaElement();
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
+    }
+  }
+
+  _clearMediaElement() {
+    if (this.scheduledTimer) {
+      clearTimeout(this.scheduledTimer);
+      this.scheduledTimer = null;
+    }
+    if (this.audioElement) {
+      this.audioElement.pause();
+      this.audioElement.removeAttribute('src');
+      this.audioElement.load();
+      this.audioElement = null;
     }
   }
 }

@@ -76,6 +76,8 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
         break;
 
       case 'playback-state':
+        handlePlaybackSync(msg.state || {});
+        break;
       case 'time-sync':
         handlePlaybackSync(msg);
         break;

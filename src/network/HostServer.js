@@ -275,6 +275,16 @@ class HostServer {
     }
   }
 
+  updatePlaylistItem(index, song) {
+    if (index >= 0 && index < this.roomState.playlist.length) {
+      this.roomState.playlist[index] = song;
+      if (this.roomState.currentIndex === index) {
+        this.roomState.currentSong = song;
+      }
+      this.broadcast({ type: 'playlist-update', playlist: this.roomState.playlist });
+    }
+  }
+
   broadcastTimeSync(currentServerTime) {
     this.broadcast({
       type: 'time-sync',

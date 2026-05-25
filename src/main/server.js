@@ -320,6 +320,12 @@ function registerHandlers(window) {
     return { success: true };
   });
 
+  ipcMain.handle('playlist:update', async (_, index, song) => {
+    if (!currentServer) return { error: 'Not hosting' };
+    currentServer.updatePlaylistItem(index, song);
+    return { success: true, playlist: currentServer.roomState.playlist };
+  });
+
   ipcMain.handle('playlist:reorder', async (_, fromIndex, toIndex) => {
     if (!currentServer) return { error: 'Not hosting' };
     const pl = currentServer.roomState.playlist;

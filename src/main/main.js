@@ -21,7 +21,7 @@ function createWindow() {
 
   const isDev = !app.isPackaged;
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../dist/renderer/index.html'));
@@ -29,6 +29,20 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+
+  if (isDev) {
+    mainWindow.webContents.on('console-message', (_, level, message, line, sourceId) => {
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    });
+  }
+
+  mainWindow.webContents.on('did-fail-load', (_, errorCode, errorDescription, validatedURL) => {
+    console.error(`[renderer:load-failed] ${errorCode} ${errorDescription} ${validatedURL}`);
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_, details) => {
+    console.error('[renderer:gone]', details);
   });
 
   mainWindow.on('closed', () => {
