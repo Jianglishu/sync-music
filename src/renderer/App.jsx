@@ -4,24 +4,28 @@ import HostRoom from './pages/HostRoom';
 import ClientRoom from './pages/ClientRoom';
 
 export default function App() {
-  const [page, setPage] = useState('home');
+  const isElectron = Boolean(window.electronAPI);
+  const canAutoJoinWebRoom = !isElectron && window.location.protocol.startsWith('http') &&
+    !['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const [page, setPage] = useState(canAutoJoinWebRoom ? 'client' : 'home');
   const [roomInfo, setRoomInfo] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
+  const [connectionStatus, setConnectionStatus] = useState(canAutoJoinWebRoom ? 'connecting' : 'disconnected');
   const [wsMessages, setWsMessages] = useState([]);
   const [roomEvents, setRoomEvents] = useState([]);
   const [electronMissing, setElectronMissing] = useState(false);
+  const browserSocketRef = React.useRef(null);
 
   // Check if running in Electron
   useEffect(() => {
-    if (!window.electronAPI) {
+    if (!isElectron && !canAutoJoinWebRoom) {
       const timer = setTimeout(() => setElectronMissing(true), 1000);
       return () => clearTimeout(timer);
     }
-  }, []);
+  }, [canAutoJoinWebRoom, isElectron]);
 
   // Handle WebSocket messages from main process
   useEffect(() => {
-    if (!window.electronAPI) return;
+    if (!isElectron) return;
 
     const cleanups = [];
 
@@ -42,6 +46,63 @@ export default function App() {
     }));
 
     return () => cleanups.forEach((fn) => fn());
+  }, [isElectron]);
+
+  const connectBrowserRoom = useCallback((address) => {
+    const normalizedAddress = address.trim().replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (!normalizedAddress) return;
+
+    if (browserSocketRef.current) {
+      browserSocketRef.current.close();
+      browserSocketRef.current = null;
+    }
+
+    setConnectionStatus('connecting');
+    setRoomInfo({ address: normalizedAddress, webUrl: `${window.location.protocol}//${normalizedAddress}` });
+    setPage('client');
+
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const socket = new WebSocket(`${wsProtocol}://${normalizedAddress}`);
+    browserSocketRef.current = socket;
+
+    socket.addEventListener('open', () => {
+      setConnectionStatus('connected');
+    });
+    socket.addEventListener('message', (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        setWsMessages((prev) => [...prev.slice(-50), msg]);
+      } catch (err) {
+        // Ignore malformed messages from non-SyncMusic sockets.
+      }
+    });
+    socket.addEventListener('close', () => {
+      setConnectionStatus('disconnected');
+    });
+    socket.addEventListener('error', () => {
+      setConnectionStatus('error');
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!canAutoJoinWebRoom) return;
+    connectBrowserRoom(window.location.host);
+
+    return () => {
+      if (browserSocketRef.current) {
+        browserSocketRef.current.close();
+        browserSocketRef.current = null;
+      }
+    };
+  }, [canAutoJoinWebRoom, connectBrowserRoom]);
+
+  const sendBrowserWsMessage = useCallback((msg) => {
+    const socket = browserSocketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(msg));
+      return true;
+    }
+    return false;
   }, []);
 
   const handleCreateRoom = useCallback(async () => {
@@ -59,7 +120,8 @@ export default function App() {
 
   const handleJoinRoom = useCallback(async (address) => {
     if (!window.electronAPI) {
-      throw new Error('请在桌面应用中运行');
+      connectBrowserRoom(address);
+      return;
     }
     const result = await window.electronAPI.joinRoom(address);
     if (result.success) {
@@ -68,11 +130,14 @@ export default function App() {
     } else {
       throw new Error(result.error || '加入房间失败');
     }
-  }, []);
+  }, [connectBrowserRoom]);
 
   const handleLeave = useCallback(async () => {
     if (window.electronAPI) {
       await window.electronAPI.leaveRoom();
+    } else if (browserSocketRef.current) {
+      browserSocketRef.current.close();
+      browserSocketRef.current = null;
     }
     setPage('home');
     setRoomInfo(null);
@@ -83,7 +148,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {electronMissing && (
+      {electronMissing && page === 'home' && (
         <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#332200', color: '#f0ad4e', fontSize: 12, padding: '8px 16px', textAlign: 'center', zIndex: 999 }}>
           ⚠️ 未检测到桌面环境，部分功能不可用。请使用 <code>npm run dev</code> 启动完整应用
         </div>
@@ -107,6 +172,8 @@ export default function App() {
           roomInfo={roomInfo}
           wsMessages={wsMessages}
           connectionStatus={connectionStatus}
+          sendWsMessage={isElectron ? window.electronAPI.sendWsMessage : sendBrowserWsMessage}
+          webClient={!isElectron}
           onLeave={handleLeave}
         />
       )}

@@ -9,6 +9,7 @@ class SyncEngine {
     this.samples = [];         // recent offset samples for median filtering
     this.maxSamples = 10;
     this.syncInterval = null;
+    this.burstTimers = [];
     this.onSyncResult = null;  // callback({ offset, rtt, accuracy })
     this._sendSync = null;     // function to send sync message
   }
@@ -23,6 +24,9 @@ class SyncEngine {
 
     // Do an immediate sync
     this._doSync();
+    this.burstTimers = [100, 250, 500, 900, 1400].map((delay) =>
+      setTimeout(() => this._doSync(), delay)
+    );
 
     // Then periodic sync
     this.syncInterval = setInterval(() => this._doSync(), intervalMs);
@@ -33,6 +37,8 @@ class SyncEngine {
       clearInterval(this.syncInterval);
       this.syncInterval = null;
     }
+    this.burstTimers.forEach((timer) => clearTimeout(timer));
+    this.burstTimers = [];
   }
 
   /**

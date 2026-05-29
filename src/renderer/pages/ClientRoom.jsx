@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import AudioPlayer from '../audio/AudioPlayer';
 import SyncEngine from '../audio/SyncEngine';
 
-export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onLeave }) {
+export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, sendWsMessage, webClient = false, onLeave }) {
   const [playlist, setPlaylist] = useState([]);
   const [currentSong, setCurrentSong] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -10,10 +10,12 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
   const [syncRtt, setSyncRtt] = useState(0);
   const [position, setPosition] = useState(0);
   const [ready, setReady] = useState(false);
+  const [audioUnlocked, setAudioUnlocked] = useState(!webClient);
 
   const audioPlayerRef = useRef(null);
   const syncEngineRef = useRef(null);
   const progressInterval = useRef(null);
+  const pendingPlaybackRef = useRef(null);
 
   // Initialize audio player
   useEffect(() => {
@@ -21,6 +23,9 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
       const player = new AudioPlayer();
       await player.init();
       audioPlayerRef.current = player;
+      if (player.getAudioContext()?.state === 'running') {
+        setAudioUnlocked(true);
+      }
       setReady(true);
     };
     init();
@@ -46,16 +51,90 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
 
       engine.start(
         (msg) => {
-          if (window.electronAPI) {
-            window.electronAPI.sendWsMessage(msg);
-          }
+          sendWsMessage?.(msg);
         },
         3000
       );
     };
 
     initSync();
-  }, [ready]);
+  }, [ready, sendWsMessage]);
+
+  const handlePlaybackSync = useCallback(async (msg) => {
+    const player = audioPlayerRef.current;
+    const engine = syncEngineRef.current;
+    if (!player || !engine) return;
+
+    const fallbackSong = Number.isInteger(msg.currentIndex) ? playlist[msg.currentIndex] : null;
+    const { isPlaying: shouldPlay, startTime, startPosition = 0 } = msg;
+    const song = msg.currentSong || fallbackSong;
+
+    if (song) setCurrentSong(song);
+
+    if (webClient && !audioUnlocked && shouldPlay) {
+      pendingPlaybackRef.current = { ...msg, currentSong: song };
+      setIsPlaying(true);
+      return;
+    }
+
+    if (shouldPlay) {
+      const nowServer = engine.getServerTime();
+      let delay = (startTime - nowServer) / 1000;
+
+      // If we missed the start, play immediately from current position
+      if (delay < -0.15) {
+        const elapsed = (nowServer - startTime) / 1000;
+        const seekPos = startPosition + elapsed;
+        const songDuration = song?.duration || 300;
+        if (seekPos < songDuration) {
+          await loadAndPlay(player, song, seekPos);
+        }
+      } else {
+        // Schedule precise playback
+        delay = Math.max(0, delay);
+
+        // Load audio first
+        if (song && song.audioUrl) {
+          await player.loadAudio(song.audioUrl);
+          const ctx = player.getAudioContext();
+          player.schedulePlay(ctx.currentTime + delay, startPosition, 1.0);
+        }
+      }
+
+      setIsPlaying(true);
+    } else {
+      player.pause();
+      setIsPlaying(false);
+    }
+  }, [audioUnlocked, playlist, webClient]);
+
+  const handleClockSync = useCallback((msg) => {
+    const player = audioPlayerRef.current;
+    const engine = syncEngineRef.current;
+    if (!player || !engine) return;
+
+    if (!msg.isPlaying) {
+      player.pause();
+      setIsPlaying(false);
+      return;
+    }
+
+    const song = msg.currentSong || (Number.isInteger(msg.currentIndex) ? playlist[msg.currentIndex] : null);
+    if (!currentSong || (song && song.id !== currentSong.id) || !player.isPlaying) {
+      handlePlaybackSync(msg);
+      return;
+    }
+
+    const expectedPosition = msg.startPosition + (engine.getServerTime() - msg.startTime) / 1000;
+    const currentPosition = player.getCurrentPosition();
+    const drift = currentPosition - expectedPosition;
+
+    if (Math.abs(drift) > 0.25) {
+      player.seek(Math.max(0, expectedPosition));
+    } else {
+      player.correctDrift(drift);
+    }
+  }, [currentSong, handlePlaybackSync, playlist]);
 
   // Process WebSocket messages
   useEffect(() => {
@@ -79,52 +158,10 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
         handlePlaybackSync(msg.state || {});
         break;
       case 'time-sync':
-        handlePlaybackSync(msg);
+        handleClockSync(msg);
         break;
     }
-  }, [wsMessages]);
-
-  const handlePlaybackSync = useCallback(async (msg) => {
-    const player = audioPlayerRef.current;
-    const engine = syncEngineRef.current;
-    if (!player || !engine) return;
-
-    const { isPlaying: shouldPlay, currentSong: song, startTime, startPosition } = msg;
-
-    if (song) setCurrentSong(song);
-
-    if (shouldPlay) {
-      // Calculate when to start playing
-      const targetServerTime = startTime;
-      const nowServer = engine.getServerTime();
-      let delay = (targetServerTime + startPosition * 1000 - nowServer) / 1000;
-
-      // If we missed the start, play immediately from current position
-      if (delay < -1) {
-        const elapsed = (nowServer - targetServerTime) / 1000;
-        const seekPos = startPosition + elapsed;
-        const songDuration = song?.duration || 300;
-        if (seekPos < songDuration) {
-          await loadAndPlay(player, song, seekPos);
-        }
-      } else {
-        // Schedule precise playback
-        delay = Math.max(0, delay + 0.5); // add 500ms safety buffer
-
-        // Load audio first
-        if (song && song.audioUrl) {
-          await player.loadAudio(song.audioUrl);
-          const ctx = player.getAudioContext();
-          player.schedulePlay(ctx.currentTime + delay, startPosition, 1.0);
-        }
-      }
-
-      setIsPlaying(true);
-    } else {
-      player.pause();
-      setIsPlaying(false);
-    }
-  }, []);
+  }, [wsMessages, handleClockSync, handlePlaybackSync]);
 
   const loadAndPlay = async (player, song, position) => {
     if (!song?.audioUrl) return;
@@ -135,6 +172,22 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
       console.error('Load/play error:', e);
     }
   };
+
+  const enableAudio = async () => {
+    const player = audioPlayerRef.current;
+    const ctx = player?.getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+    setAudioUnlocked(true);
+  };
+
+  useEffect(() => {
+    if (!audioUnlocked || !pendingPlaybackRef.current) return;
+    const pending = pendingPlaybackRef.current;
+    pendingPlaybackRef.current = null;
+    handlePlaybackSync(pending);
+  }, [audioUnlocked, handlePlaybackSync]);
 
   // Position update interval
   useEffect(() => {
@@ -175,6 +228,15 @@ export default function ClientRoom({ roomInfo, wsMessages, connectionStatus, onL
           </span>
         )}
       </div>
+
+      {webClient && !audioUnlocked && (
+        <div className="web-audio-unlock">
+          <button className="btn btn-primary" onClick={enableAudio}>
+            启用声音
+          </button>
+          <span>iPad 需要先点一次，之后会跟随房主同步播放</span>
+        </div>
+      )}
 
       {connectionStatus === 'connected' ? (
         <>

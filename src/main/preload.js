@@ -7,10 +7,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   leaveRoom: () => ipcRenderer.invoke('room:leave'),
 
   // Playback control (Host only)
-  hostPlay: (songIndex, audioUrl) => ipcRenderer.invoke('playback:play', { songIndex, audioUrl }),
+  hostPlay: (songIndex, audioUrl, options = {}) => ipcRenderer.invoke('playback:play', { songIndex, audioUrl, ...options }),
   hostPause: () => ipcRenderer.invoke('playback:pause'),
-  hostResume: () => ipcRenderer.invoke('playback:resume'),
-  hostSeek: (seconds) => ipcRenderer.invoke('playback:seek', seconds),
+  hostResume: (options = {}) => ipcRenderer.invoke('playback:resume', options),
+  hostSeek: (seconds, options = {}) => ipcRenderer.invoke('playback:seek', { seconds, ...options }),
 
   // Music search
   searchMusic: (query) => ipcRenderer.invoke('music:search', query),

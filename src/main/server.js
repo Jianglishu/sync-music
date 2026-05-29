@@ -226,7 +226,7 @@ function registerHandlers(window) {
   });
 
   // ======== Playback Control (Host) ========
-  ipcMain.handle('playback:play', async (_, { songIndex, audioUrl } = {}) => {
+  ipcMain.handle('playback:play', async (_, { songIndex, audioUrl, startTime, startPosition = 0 } = {}) => {
     if (!currentServer) return { error: 'Not hosting' };
 
     const playlist = currentServer.roomState.playlist;
@@ -238,9 +238,9 @@ function registerHandlers(window) {
       currentIndex: idx,
       currentSong: song,
       isPlaying: true,
-      startTime: Date.now(),
-      startPosition: 0,
-      position: 0,
+      startTime: startTime || Date.now(),
+      startPosition,
+      position: startPosition,
     });
 
     return { success: true, song };
@@ -260,28 +260,30 @@ function registerHandlers(window) {
     return { success: true };
   });
 
-  ipcMain.handle('playback:resume', async () => {
+  ipcMain.handle('playback:resume', async (_, { startTime } = {}) => {
     if (!currentServer) return { error: 'Not hosting' };
 
+    const resumeStartTime = startTime || Date.now();
     currentServer.setPlaybackState({
       isPlaying: true,
-      startTime: Date.now(),
+      startTime: resumeStartTime,
       startPosition: currentServer.roomState.position,
     });
 
-    return { success: true };
+    return { success: true, startTime: resumeStartTime, startPosition: currentServer.roomState.position };
   });
 
-  ipcMain.handle('playback:seek', async (_, seconds) => {
+  ipcMain.handle('playback:seek', async (_, { seconds, startTime } = {}) => {
     if (!currentServer) return { error: 'Not hosting' };
 
+    const seekStartTime = startTime || Date.now();
     currentServer.setPlaybackState({
-      startTime: Date.now(),
+      startTime: seekStartTime,
       startPosition: seconds,
       position: seconds,
     });
 
-    return { success: true };
+    return { success: true, startTime: seekStartTime, startPosition: seconds };
   });
 
   // ======== Local File Selection ========

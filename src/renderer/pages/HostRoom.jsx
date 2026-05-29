@@ -4,6 +4,8 @@ import SearchDialog from '../components/SearchDialog';
 import SyncEngine from '../audio/SyncEngine';
 import AudioPlayer from '../audio/AudioPlayer';
 
+const SYNC_START_DELAY_MS = 180;
+
 export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) {
   const [playlist, setPlaylist] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
@@ -20,7 +22,6 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
   const audioPlayerRef = useRef(null);
   const syncEngineRef = useRef(null);
   const progressInterval = useRef(null);
-  const timeSyncInterval = useRef(null);
 
   const roomCode = roomInfo?.roomCode || `${roomInfo?.publicIp || '127.0.0.1'}:${roomInfo?.port}`;
 
@@ -103,29 +104,11 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
         setCurrentPosition(pos);
       }, 500);
 
-      // Broadcast time sync periodically
-      timeSyncInterval.current = setInterval(() => {
-        // Broadcast current server time and playback state to clients
-        const msg = JSON.stringify({
-          type: 'time-sync',
-          serverTime: Date.now(),
-          startTime: Date.now(), // placeholder — real logic in integration
-          startPosition: currentPosition,
-          isPlaying: true,
-          currentIndex,
-        });
-        // Send via IPC to broadcast
-        if (window.electronAPI) {
-          // Host broadcast is handled by the host server directly
-        }
-      }, 2000);
-
       return () => {
         clearInterval(progressInterval.current);
-        clearInterval(timeSyncInterval.current);
       };
     }
-  }, [isPlaying, currentIndex, currentPosition]);
+  }, [isPlaying]);
 
   // Listen for WebSocket messages (though host doesn't need to)
   useEffect(() => {
@@ -154,6 +137,7 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
   const currentSong = currentIndex >= 0 && currentIndex < playlist.length
     ? playlist[currentIndex]
     : null;
+  const webClientUrl = roomInfo?.localAddress ? `http://${roomInfo.localAddress}` : `http://${roomCode}`;
 
   const playSong = useCallback(async (index) => {
     const song = playlist[index];
@@ -191,10 +175,13 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
             await window.electronAPI.updateSong(index, updatedSong);
           }
         }
+        const startTime = Date.now() + SYNC_START_DELAY_MS;
         if (window.electronAPI) {
-          await window.electronAPI.hostPlay(index, songToPlay.audioUrl || url);
+          await window.electronAPI.hostPlay(index, songToPlay.audioUrl || url, { startTime, startPosition: 0 });
         }
-        player.play(0);
+        const ctx = player.getAudioContext();
+        const delaySeconds = Math.max(0.02, (startTime - Date.now()) / 1000);
+        player.schedulePlay(ctx.currentTime + delaySeconds, 0, 1.0);
         setIsPlaying(true);
       } catch (err) {
         alert('播放失败: ' + (err.message || '未知错误'));
@@ -210,12 +197,22 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const seconds = ratio * currentSong.duration;
 
-    player.seek(seconds);
-    setCurrentPosition(seconds);
-    if (window.electronAPI) {
-      await window.electronAPI.hostSeek(seconds);
+    if (isPlaying) {
+      const startTime = Date.now() + SYNC_START_DELAY_MS;
+      const delaySeconds = Math.max(0.02, (startTime - Date.now()) / 1000);
+      player.stop();
+      player.schedulePlay(player.getAudioContext().currentTime + delaySeconds, seconds, 1.0);
+      if (window.electronAPI) {
+        await window.electronAPI.hostSeek(seconds, { startTime });
+      }
+    } else {
+      player.seek(seconds);
+      if (window.electronAPI) {
+        await window.electronAPI.hostSeek(seconds);
+      }
     }
-  }, [currentSong]);
+    setCurrentPosition(seconds);
+  }, [currentSong, isPlaying]);
 
   const handlePlayPause = useCallback(async () => {
     if (currentIndex < 0 && playlist.length > 0) {
@@ -232,9 +229,12 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
       if (window.electronAPI) await window.electronAPI.hostPause();
     } else {
       if (player.getCurrentPosition() > 0) {
-        player.resume();
+        const startTime = Date.now() + SYNC_START_DELAY_MS;
+        const startPosition = player.getCurrentPosition();
+        const delaySeconds = Math.max(0.02, (startTime - Date.now()) / 1000);
+        player.schedulePlay(player.getAudioContext().currentTime + delaySeconds, startPosition, 1.0);
         setIsPlaying(true);
-        if (window.electronAPI) await window.electronAPI.hostResume();
+        if (window.electronAPI) await window.electronAPI.hostResume({ startTime });
       } else {
         await playSong(currentIndex);
       }
@@ -304,6 +304,13 @@ export default function HostRoom({ roomInfo, wsMessages, roomEvents, onLeave }) 
         <div className="room-code" onClick={() => navigator.clipboard?.writeText(roomCode)} title="点击复制">
           📋 {roomCode}
         </div>
+      </div>
+
+      <div className="web-client-tip">
+        <span>iPad 浏览器打开</span>
+        <button type="button" onClick={() => navigator.clipboard?.writeText(webClientUrl)}>
+          {webClientUrl}
+        </button>
       </div>
 
       {/* Device count & yt-dlp status */}

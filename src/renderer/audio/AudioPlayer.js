@@ -53,7 +53,13 @@ class AudioPlayer {
   }
 
   _shouldUseMediaElement(url) {
-    return typeof url === 'string' && /^https?:\/\/127\.0\.0\.1:/i.test(url);
+    if (typeof url !== 'string') return false;
+    try {
+      const parsed = new URL(url, window.location.href);
+      return parsed.pathname.startsWith('/files/');
+    } catch (err) {
+      return false;
+    }
   }
 
   _loadMediaElement(url) {
@@ -274,7 +280,12 @@ class AudioPlayer {
    * @param {number} driftSeconds - How far ahead (+) or behind (-) we are
    */
   correctDrift(driftSeconds) {
-    if (Math.abs(driftSeconds) < 0.05) return; // ignore tiny drift
+    if (Math.abs(driftSeconds) < 0.05) {
+      if (this.playbackRate !== 1.0) {
+        this.setPlaybackRate(1.0);
+      }
+      return;
+    }
 
     // Adjust rate inversely proportional to drift, capped at ±3%
     const correction = Math.max(-0.03, Math.min(0.03, -driftSeconds * 0.1));

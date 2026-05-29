@@ -197,6 +197,33 @@
   background: #282828;
 }
 
+.web-client-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 8px;
+  color: #8a8a8a;
+  font-size: 12px;
+}
+
+.web-client-tip button {
+  min-width: 0;
+  border: 1px solid #2a332d;
+  background: #121f16;
+  color: #52e47d;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-client-tip button:hover {
+  background: #17301d;
+}
+
 .room-header button {
   -webkit-app-region: no-drag;
 }
@@ -491,6 +518,26 @@
   color: #666;
 }
 
+.web-audio-unlock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 10px;
+  padding: 10px;
+  border: 1px solid #263027;
+  border-radius: 8px;
+  background: #121713;
+  color: #8d9a90;
+  font-size: 12px;
+}
+
+.web-audio-unlock .btn {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
 /* ======== Device List ======== */
 .device-list {
   display: flex;
@@ -560,3 +607,33 @@
 .sync-status .good { color: #1ed760; }
 .sync-status .fair { color: #f0ad4e; }
 .sync-status .poor { color: #e74c3c; }
+
+@media (max-width: 640px) {
+  .app {
+    min-height: 100dvh;
+    height: 100dvh;
+  }
+
+  .title-bar {
+    height: 44px;
+  }
+
+  .room-header .room-code {
+    max-width: none;
+  }
+
+  .web-client-tip {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .web-client-tip button {
+    width: 100%;
+    text-align: left;
+  }
+
+  .web-audio-unlock {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

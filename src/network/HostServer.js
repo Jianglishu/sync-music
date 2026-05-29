@@ -15,6 +15,19 @@ const MIME_MAP = {
   '.wma': 'audio/x-ms-wma',
 };
 
+const WEB_MIME_MAP = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+};
+
 class HostServer {
   constructor(port = 0) {
     this.port = port;
@@ -24,7 +37,9 @@ class HostServer {
     this.nextClientId = 1;
     this.onEvent = null;
     this.hostAddress = '127.0.0.1';
+    this.webRoot = path.resolve(__dirname, '../../dist/renderer');
     this.localFiles = new Map(); // fileId → { path, name, size, mime, duration }
+    this.timeSyncTimer = null;
 
     this.roomState = {
       playlist: [],
@@ -47,9 +62,7 @@ class HostServer {
           return this._serveFile(req, res, url);
         }
 
-        // Default: health check
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('SyncMusic Server');
+        return this._serveWebApp(req, res, url);
       });
 
       this.wss = new WebSocketServer({ server: this.server });
@@ -63,6 +76,7 @@ class HostServer {
         ws.on('close', () => this._handleDisconnect(ws, clientInfo));
         ws.on('error', () => this._handleDisconnect(ws, clientInfo));
 
+        this._sendInitialState(ws);
         this._emit('client-joined', { id: clientId, count: this.clients.size });
       });
 
@@ -76,6 +90,29 @@ class HostServer {
   }
 
   // ====== File Serving ======
+
+  _serveWebApp(req, res, url) {
+    const pathname = decodeURIComponent((url.split('?')[0] || '/'));
+    const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+    const requestedPath = path.normalize(path.join(this.webRoot, relativePath));
+    const isInsideWebRoot = requestedPath === this.webRoot || requestedPath.startsWith(this.webRoot + path.sep);
+    const filePath = isInsideWebRoot && fs.existsSync(requestedPath) && fs.statSync(requestedPath).isFile()
+      ? requestedPath
+      : path.join(this.webRoot, 'index.html');
+
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('SyncMusic Server\n\n请先运行 npm run build:renderer，然后重新创建房间，iPad 才能通过浏览器打开。');
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': WEB_MIME_MAP[ext] || 'application/octet-stream',
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+    });
+    fs.createReadStream(filePath).pipe(res);
+  }
 
   /**
    * Serve a local audio file via HTTP.
@@ -219,6 +256,24 @@ class HostServer {
     this._emit('client-left', { id: clientInfo.id, count: this.clients.size });
   }
 
+  _sendInitialState(ws) {
+    this._send(ws, {
+      type: 'playlist-update',
+      playlist: this.roomState.playlist,
+    });
+    this._send(ws, {
+      type: 'playback-state',
+      state: {
+        isPlaying: this.roomState.isPlaying,
+        currentIndex: this.roomState.currentIndex,
+        currentSong: this.roomState.currentSong,
+        position: this.roomState.position,
+        startTime: this.roomState.startTime,
+        startPosition: this.roomState.startPosition,
+      },
+    });
+  }
+
   broadcast(data, excludeWs = null) {
     const msg = typeof data === 'string' ? data : JSON.stringify(data);
     this.wss.clients.forEach((client) => {
@@ -259,6 +314,11 @@ class HostServer {
   setPlaybackState(state) {
     Object.assign(this.roomState, state);
     this.broadcastPlaybackState();
+    if (this.roomState.isPlaying) {
+      this._startTimeSync();
+    } else {
+      this._stopTimeSync();
+    }
   }
 
   addToPlaylist(song) {
@@ -294,10 +354,30 @@ class HostServer {
       startPosition: this.roomState.startPosition,
       isPlaying: this.roomState.isPlaying,
       currentIndex: this.roomState.currentIndex,
+      currentSong: this.roomState.currentSong,
     });
   }
 
+  _startTimeSync() {
+    if (this.timeSyncTimer) return;
+    this.timeSyncTimer = setInterval(() => {
+      if (!this.roomState.isPlaying) {
+        this._stopTimeSync();
+        return;
+      }
+      this.broadcastTimeSync(Date.now());
+    }, 1000);
+  }
+
+  _stopTimeSync() {
+    if (this.timeSyncTimer) {
+      clearInterval(this.timeSyncTimer);
+      this.timeSyncTimer = null;
+    }
+  }
+
   stop() {
+    this._stopTimeSync();
     if (this.wss) {
       this.wss.close();
       this.wss = null;
