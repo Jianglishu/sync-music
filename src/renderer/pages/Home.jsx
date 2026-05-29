@@ -21,8 +21,13 @@ export default function Home({ onCreateRoom, onJoinRoom }) {
     if (!joinAddress.trim()) return;
     setJoining(true);
     setError('');
-    await onJoinRoom(joinAddress.trim());
-    setJoining(false);
+    try {
+      await onJoinRoom(joinAddress.trim());
+    } catch (e) {
+      setError('连接失败: ' + (e.message || '请确认房间地址正确'));
+    } finally {
+      setJoining(false);
+    }
   };
 
   return (

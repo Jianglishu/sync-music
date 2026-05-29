@@ -23,6 +23,7 @@ class HostServer {
     this.clients = new Map();
     this.nextClientId = 1;
     this.onEvent = null;
+    this.hostAddress = '127.0.0.1';
     this.localFiles = new Map(); // fileId → { path, name, size, mime, duration }
 
     this.roomState = {
@@ -119,7 +120,7 @@ class HostServer {
       albumPic: '',
       duration: estimatedDuration,
       source: 'local',
-      audioUrl: `http://127.0.0.1:${this.port}/files/${encodeURIComponent(fileId)}`,
+      audioUrl: `http://${this.hostAddress}:${this.port}/files/${encodeURIComponent(fileId)}`,
       filePath: filePath,
     };
   }
@@ -181,7 +182,7 @@ class HostServer {
    * Get the HTTP URL for a local file.
    */
   getFileUrl(fileId) {
-    return `http://127.0.0.1:${this.port}/files/${encodeURIComponent(fileId)}`;
+    return `http://${this.hostAddress}:${this.port}/files/${encodeURIComponent(fileId)}`;
   }
 
   // ====== WebSocket Message Handling ======

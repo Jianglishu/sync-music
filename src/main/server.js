@@ -1,6 +1,7 @@
 const { ipcMain, BrowserWindow, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
+const os = require('os');
 const HostServer = require('../network/HostServer');
 const ClientSocket = require('../network/ClientSocket');
 const NeteaseAPI = require('../../scripts/netease-api');
@@ -17,6 +18,18 @@ function sendToRenderer(channel, data) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, data);
   }
+}
+
+function getLanAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry.family === 'IPv4' && !entry.internal) {
+        return entry.address;
+      }
+    }
+  }
+  return '127.0.0.1';
 }
 
 function registerHandlers(window) {
@@ -37,6 +50,8 @@ function registerHandlers(window) {
     try {
       const server = new HostServer();
       await server.start(0); // random port
+      const lanAddress = getLanAddress();
+      server.hostAddress = lanAddress;
 
       server.onEvent = (event, data) => {
         sendToRenderer('room:event', { event, data });
@@ -48,9 +63,9 @@ function registerHandlers(window) {
       // Return immediately with local info — background tasks can update later
       const roomInfo = {
         port: server.port,
-        publicIp: '127.0.0.1',
-        localAddress: `127.0.0.1:${server.port}`,
-        roomCode: `127.0.0.1:${server.port}`,
+        publicIp: lanAddress,
+        localAddress: `${lanAddress}:${server.port}`,
+        roomCode: `${lanAddress}:${server.port}`,
       };
 
       // ====== Background: Get public IP ======
